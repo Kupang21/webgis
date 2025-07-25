@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>WebGIS Sederhana</title>
+
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Leaflet Measure Plugin -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-measure@3.3.1/dist/leaflet-measure.css" />
+  <script src="https://unpkg.com/leaflet-measure@3.3.1/dist/leaflet-measure.min.js"></script>
+
+  <!-- Turf.js for spatial analysis -->
+  <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+
+  <!-- Leaflet KML plugin -->
+  <script src="https://rawcdn.githack.com/gpaumier/leaflet-kml/master/leaflet-kml.js"></script>
+
+  <style>
+    html, body, #map {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+    }
+    .control-box {
+      position: absolute;
+      top: 10px;
+      left: 50px;
+      z-index: 1000;
+      background: white;
+      padding: 10px;
+      border-radius: 8px;
+      box-shadow: 0 0 5px rgba(0,0,0,0.3);
+      font-family: sans-serif;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+<div class="control-box">
+  <label>Provinsi:</label>
+  <select id="provinsiSelect"></select><br/>
+  <label>Kota:</label>
+  <select id="kotaSelect"></select><br/><br/>
+
+  <label>Pilih Layer:</label><br/>
+  <input type="checkbox" id="kawasan"> Kawasan Hutan<br/>
+  <input type="checkbox" id="arahan"> Arahan<br/>
+  <input type="checkbox" id="eksisting"> Eksisting<br/>
+  <input type="checkbox" id="tata"> Tata Hutan<br/><br/>
+
+  <label>Unggah GeoJSON/KML:</label>
+  <input type="file" id="uploadFile" accept=".geojson,.kml"/><br/><br/>
+
+  <button onclick="runIntersection()">Analisa Tumpang Tindih</button>
+</div>
+
+<div id="map"></div>
+
+<script>
+  const map = L.map('map').setView([-2.5, 117.5], 5);
+
+  const baseLayers = {
+    "OpenStreetMap": L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OSM'
+    }).addTo(map),
+    "Google Satellite": L.tileLayer('http://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+      maxZoom: 20,
+      subdomains:['mt0','mt1','mt2','mt3']
+    }),
+    "ESRI Satelite": L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: 'Tiles &copy; Esri'
+    })
+  };
+
+  L.control.layers(baseLayers).addTo(map);
+
+  // Layer kelompok
+  const layerKawasan = L.geoJSON(null, { onEachFeature: onEachFeature });
+  const layerArahan = L.geoJSON(null, { onEachFeature: onEachFeature });
+  const layerEksisting = L.geoJSON(null, { onEachFeature: onEachFeature });
+  const layerTata = L.geoJSON(null, { onEachFeature: onEachFeature });
+
+  // Load data layer dari folder data/
+  function loadGeoJSON(url, layerGroup) {
+    fetch(url).then(res => res.json()).then(data => {
+      layerGroup.addData(data);
+    });
+  }
+
+  loadGeoJSON('data/kawasan_hutan.geojson', layerKawasan);
+  loadGeoJSON('data/arahan.geojson', layerArahan);
+  loadGeoJSON('data/eksisting.geojson', layerEksisting);
+  loadGeoJSON('data/tata_hutan.geojson', layerTata);
+
+  // Checkbox kontrol layer
+  document.getElementById('kawasan').onchange = (e) => {
+    e.target.checked ? map.addLayer(layerKawasan) : map.removeLayer(layerKawasan);
+  };
+  document.getElementById('arahan').onchange = (e) => {
+    e.target.checked ? map.addLayer(layerArahan) : map.removeLayer(layerArahan);
+  };
+  document.getElementById('eksisting').onchange = (e) => {
+    e.target.checked ? map.addLayer(layerEksisting) : map.removeLayer(layerEksisting);
+  };
+  document.getElementById('tata').onchange = (e) => {
+    e.target.checked ? map.addLayer(layerTata) : map.removeLayer(layerTata);
+  };
+
+  // Ukur panjang / luas
+  L.control.measure({
+    primaryLengthUnit: 'kilometers',
+    secondaryLengthUnit: 'meters'
+  }).addTo(map);
+
+  // Fungsi popup info fitur
+  function onEachFeature(feature, layer) {
+    let props = feature.properties;
+    let content = "<b>Informasi:</b><br/>";
+    for (let key in props) {
+      content += `<b>${key}</b>: ${props[key]}<br/>`;
+    }
+    layer.bindPopup(content);
+  }
+
+  // Simpan layer terunggah
+  let uploadedLayer = null;
+
+  document.getElementById('uploadFile').addEventListener('change', function() {
+    const file = this.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const ext = file.name.split('.').pop().toLowerCase();
+      if (uploadedLayer) {
+        map.removeLayer(uploadedLayer);
+      }
+      if (ext === 'geojson') {
+        const geojson = JSON.parse(e.target.result);
+        uploadedLayer = L.geoJSON(geojson, {
+          style: { color: 'orange' },
+          onEachFeature: onEachFeature
+        }).addTo(map);
+        map.fitBounds(uploadedLayer.getBounds());
+      } else if (ext === 'kml') {
+        const kml = new DOMParser().parseFromString(e.target.result, 'text/xml');
+        uploadedLayer = new L.KML(kml);
+        map.addLayer(uploadedLayer);
+        map.fitBounds(uploadedLayer.getBounds());
+      } else {
+        alert('Format tidak didukung');
+      }
+    };
+    reader.readAsText(file);
+  });
+
+  // Analisa Tumpang Tindih
+  function runIntersection() {
+    if (!uploadedLayer) {
+      alert("Silakan unggah file GeoJSON atau KML terlebih dahulu.");
+      return;
+    }
+
+    const intersectedFeatures = [];
+
+    uploadedLayer.eachLayer(ul => {
+      const uploadedFeature = ul.toGeoJSON();
+
+      layerKawasan.eachLayer(kl => {
+        const kawasanFeature = kl.toGeoJSON();
+        const intersection = turf.intersect(uploadedFeature, kawasanFeature);
+        if (intersection) {
+          intersectedFeatures.push(intersection);
+        }
+      });
+    });
+
+    if (intersectedFeatures.length === 0) {
+      alert("Tidak ditemukan tumpang tindih.");
+    } else {
+      const resultLayer = L.geoJSON(intersectedFeatures, {
+        style: { color: 'red', weight: 2 },
+        onEachFeature: onEachFeature
+      }).addTo(map);
+      map.fitBounds(resultLayer.getBounds());
+      alert("Ditemukan " + intersectedFeatures.length + " area tumpang tindih.");
+    }
+  }
+</script>
+</body>
+</html>
